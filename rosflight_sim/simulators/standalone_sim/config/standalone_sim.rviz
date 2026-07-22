@@ -96,6 +96,30 @@ Visualization Manager:
         Reliability Policy: Reliable
         Value: /rviz/mesh_path
       Value: true
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: Obstacles
+      Topic:
+        Depth: 5
+        Durability Policy: Transient Local
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /mock_env/obstacles
+      Value: true
+    - Class: rviz_default_plugins/PointCloud2
+      Enabled: true
+      Name: LiDAR
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /mock_env/lidar
+      Color: 0; 255; 0
+      Color Transformer: FlatColor
+      Size (Pixels): 3
+      Style: Points
+      Value: true
   Enabled: true
   Global Options:
     Background Color: 255; 255; 255

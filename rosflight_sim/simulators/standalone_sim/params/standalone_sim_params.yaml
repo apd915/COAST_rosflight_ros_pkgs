@@ -42,3 +42,16 @@
   ros__parameters:
     real_time_multiplier: 1.0
     default_pub_rate_us: 100.0
+
+/mock_environment:
+  ros__parameters:
+    lidar_rate_hz: 10.0
+    lidar_min_range: 0.1
+    lidar_max_range: 70.0
+    lidar_h_fov_deg: 360.0
+    lidar_h_res_deg: 3.0
+    lidar_v_fov_min_deg: -7.0
+    lidar_v_fov_max_deg: 52.0
+    lidar_v_res_deg: 3.0
+    ground_enabled: true
+    ground_z_ned: 0.0

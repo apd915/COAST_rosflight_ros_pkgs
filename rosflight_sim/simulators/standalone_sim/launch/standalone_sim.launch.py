@@ -86,5 +86,12 @@ def generate_launch_description():
                 output="screen",
                 parameters=[{"sim_aircraft_file": sim_aircraft_file}, param_file],
             ),
+            Node(
+                package="rosflight_sim",
+                executable="mock_environment_node",
+                name='mock_environment',
+                output="screen",
+                parameters=[param_file],
+            ),
         ]
     )

@@ -114,6 +114,23 @@ install(
   TARGETS standalone_sensors
   DESTINATION lib/${PROJECT_NAME})
 
+# Mock Environment
+add_executable(mock_environment_node
+  src/mock_environment_node.cpp)
+target_include_directories(mock_environment_node
+  PRIVATE
+    include)
+target_link_libraries(mock_environment_node Eigen3::Eigen)
+ament_target_dependencies(mock_environment_node
+  rclcpp
+  sensor_msgs
+  rosflight_msgs
+  geometry_msgs
+  visualization_msgs)
+install(
+  TARGETS mock_environment_node
+  DESTINATION lib/${PROJECT_NAME})
+
 # Dynamics
 add_executable(standalone_dynamics
   ../../src/dynamics_interface.cpp
