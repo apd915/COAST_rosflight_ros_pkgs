@@ -29,6 +29,34 @@ def generate_launch_description():
     )
     use_sim_time = LaunchConfiguration('use_sim_time')
 
+    # Forwarded to common_nodes_standalone, which declares it but was never passed it from here --
+    # so it could only ever take its default and the RC node could not be switched to vimfly from
+    # the top-level launch.
+    use_vimfly_arg = DeclareLaunchArgument(
+        "use_vimfly",
+        default_value="false",
+        description="Use vimfly (keyboard RC) instead of a physical transmitter."
+    )
+    use_vimfly = LaunchConfiguration('use_vimfly')
+
+    # Forwarded to standalone_sim, which owns mock_environment. Selects the obstacle world;
+    # its default selects the built-in demo obstacles.
+    environment_file_arg = DeclareLaunchArgument(
+        "environment_file",
+        default_value=os.path.join(get_package_share_directory("rosflight_sim"),
+                                   "params", "environment_demo.yaml"),
+        description="Obstacle-world YAML, e.g. params/forest_medium.yaml."
+    )
+    environment_file = LaunchConfiguration('environment_file')
+
+    lidar_output_frame_arg = DeclareLaunchArgument(
+        "lidar_output_frame",
+        default_value="ned",
+        description="Mock LiDAR output: 'ned' (world, truth pose) or 'sensor' (raw, needs "
+                    "use_lidar_preprocessor:=true on roscopter_sim's sim.launch.py)."
+    )
+    lidar_output_frame = LaunchConfiguration('lidar_output_frame')
+
     ##########
     # Launch #
     ##########
@@ -42,7 +70,9 @@ def generate_launch_description():
             )
         ]),
         launch_arguments={
-            'sim_aircraft_file': os.path.join("common_resource", "multirotor.dae")
+            'sim_aircraft_file': os.path.join("common_resource", "multirotor.dae"),
+            'environment_file': environment_file,
+            'lidar_output_frame': lidar_output_frame,
         }.items()
     )
 
@@ -57,6 +87,7 @@ def generate_launch_description():
         launch_arguments={
             'use_sim_time': use_sim_time,
             'dynamics_param_file': dynamics_param_file,
+            'use_vimfly': use_vimfly,
         }.items()
     )
 
@@ -83,6 +114,9 @@ def generate_launch_description():
     return LaunchDescription(
         [
             use_sim_time_arg,
+            use_vimfly_arg,
+            environment_file_arg,
+            lidar_output_frame_arg,
             simulator_launch_include,
             common_nodes_include,
             mr_forces_moments_node,

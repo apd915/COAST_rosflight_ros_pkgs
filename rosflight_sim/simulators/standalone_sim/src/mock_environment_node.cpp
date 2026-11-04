@@ -134,6 +134,23 @@ MockEnvironmentNode::MockEnvironmentNode()
 
   lidar_pub_ = this->create_publisher<sensor_msgs::msg::PointCloud2>(
     "mock_env/lidar", 10);
+  sensor_lidar_pub_ = this->create_publisher<sensor_msgs::msg::PointCloud2>(
+    "/livox/lidar", 10);
+
+  const std::string output_frame = this->get_parameter("lidar_output_frame").as_string();
+  if (output_frame != "ned" && output_frame != "sensor") {
+    RCLCPP_ERROR(this->get_logger(), "lidar_output_frame '%s' is not 'ned' or 'sensor'; using 'ned'.",
+                 output_frame.c_str());
+  }
+  sensor_frame_output_ = (output_frame == "sensor");
+  RCLCPP_INFO(this->get_logger(), "LiDAR output: %s",
+              sensor_frame_output_ ? "SENSOR frame on /livox/lidar (needs lidar_preprocessor)"
+                                   : "world NED on mock_env/lidar (truth pose)");
+
+  collision_pub_ = this->create_publisher<std_msgs::msg::Bool>("mock_env/collision", 10);
+
+  collision_enabled_ = this->get_parameter("collision_check_enabled").as_bool();
+  collision_radius_  = this->get_parameter("collision_radius").as_double();
 
   // --- Subscriber ---
   state_sub_ = this->create_subscription<rosflight_msgs::msg::SimState>(
@@ -154,6 +171,10 @@ MockEnvironmentNode::MockEnvironmentNode()
     "MockEnvironmentNode started — %zu boxes, %zu cylinders, ground=%s",
     boxes_.size(), cylinders_.size(),
     ground_enabled_ ? "ON" : "OFF");
+  RCLCPP_INFO(this->get_logger(),
+    "Collision reporting %s (hull %.2f m, checked against sim/truth_state, "
+    "published on mock_env/collision).",
+    collision_enabled_ ? "ON" : "OFF", collision_radius_);
 }
 
 // -------------------------------------------------------------------
@@ -175,9 +196,39 @@ void MockEnvironmentNode::declare_parameters()
   this->declare_parameter("lidar_v_fov_max_deg", 52.0);
   this->declare_parameter("lidar_v_res_deg", 3.0);    // default coarse for sim performance
 
+  // Output frame of the scan.
+  //   "ned"    -- hit points in world NED on mock_env/lidar, built from the TRUE pose. The
+  //               historical behaviour and what the forest benchmark numbers were measured with.
+  //               The planner's map is therefore always perfect, however wrong its estimate is.
+  //   "sensor" -- the same hits in the LiDAR's own frame (x fwd, y left, z up, metres from the
+  //               sensor) on /livox/lidar, stamped with the truth pose they were cast from --
+  //               what livox_ros_driver2 publishes. Something downstream (lidar_preprocessor)
+  //               must place them in the world using the ESTIMATED pose, as on the vehicle.
+  // Assumes the LiDAR sits at the CG, upright and facing forward; the mounting offset is a
+  // separate, later step.
+  this->declare_parameter("lidar_output_frame", "ned");
+
   // Ground plane
   this->declare_parameter("ground_enabled", true);
   this->declare_parameter("ground_z_ned", 0.0);   // z=0 in NED = ground level
+
+  // Obstacle world, as flat arrays because ROS 2 parameters cannot nest.
+  //   cylinders: [cx, cy, cz, radius, half_height, ...]   (5 values each)
+  //   boxes:     [minx, miny, minz, maxx, maxy, maxz, ...] (6 values each)
+  // Leave BOTH empty to fall back to the built-in demo world, so existing launches are
+  // unaffected. Populate them from a generated environment file to run a benchmark instead --
+  // see tools/generate_forest.py.
+  this->declare_parameter("cylinders", std::vector<double>{});
+  this->declare_parameter("boxes", std::vector<double>{});
+
+  // Collision reporting. The sim has no physics, so without this a vehicle that flies through a
+  // trunk is indistinguishable from one that avoided it -- and a success rate defined as
+  // "reached the goal WITHOUT collision" cannot be computed at all.
+  this->declare_parameter("collision_check_enabled", true);
+  // Vehicle hull radius. Should match the planner's drone_physical_radius (parsed from the
+  // rotor geometry, 0.490 m for this airframe) so that "collided" means precisely "left the
+  // volume the corridor certified", rather than some unrelated sphere.
+  this->declare_parameter("collision_radius", 0.49);
 }
 
 // -------------------------------------------------------------------
@@ -187,6 +238,40 @@ void MockEnvironmentNode::build_obstacle_world()
 {
   ground_enabled_ = this->get_parameter("ground_enabled").as_bool();
   ground_z_       = this->get_parameter("ground_z_ned").as_double();
+
+  // ------- Obstacles from parameters, if any were given -------
+  const auto cyl = this->get_parameter("cylinders").as_double_array();
+  const auto box = this->get_parameter("boxes").as_double_array();
+
+  if (!cyl.empty() || !box.empty()) {
+    if (cyl.size() % 5 != 0) {
+      RCLCPP_ERROR(this->get_logger(),
+                   "'cylinders' has %zu values, not a multiple of 5 "
+                   "([cx,cy,cz,radius,half_height] each). Ignoring it.", cyl.size());
+    } else {
+      for (std::size_t i = 0; i < cyl.size(); i += 5) {
+        cylinders_.push_back({Eigen::Vector3d(cyl[i], cyl[i + 1], cyl[i + 2]),
+                              cyl[i + 3], cyl[i + 4]});
+      }
+    }
+    if (box.size() % 6 != 0) {
+      RCLCPP_ERROR(this->get_logger(),
+                   "'boxes' has %zu values, not a multiple of 6 "
+                   "([minx,miny,minz,maxx,maxy,maxz] each). Ignoring it.", box.size());
+    } else {
+      for (std::size_t i = 0; i < box.size(); i += 6) {
+        boxes_.push_back({Eigen::Vector3d(box[i], box[i + 1], box[i + 2]),
+                          Eigen::Vector3d(box[i + 3], box[i + 4], box[i + 5])});
+      }
+    }
+    RCLCPP_INFO(this->get_logger(),
+                "Obstacle world from parameters: %zu cylinder(s), %zu box(es), ground %s.",
+                cylinders_.size(), boxes_.size(), ground_enabled_ ? "on" : "off");
+    return;
+  }
+
+  RCLCPP_INFO(this->get_logger(),
+              "No 'cylinders'/'boxes' parameters given; using the built-in demo world.");
 
   // ------- Example obstacles (all in NED metres) -------
   // Note: in NED, negative z is UP.  So a pillar from ground (z=0)
@@ -262,6 +347,87 @@ void MockEnvironmentNode::state_callback(
 {
   latest_state_ = msg;
   state_received_ = true;
+  check_collision();
+}
+
+// -------------------------------------------------------------------
+// Collision detection against the TRUE vehicle position
+// -------------------------------------------------------------------
+//
+// Checked here, on truth, rather than anywhere in the autopilot: the planner and controller
+// only ever see the ESTIMATED position, so a check on their side would report clearance from
+// where the vehicle THINKS it is. A collision is a fact about the world, and truth is the only
+// signal that carries it.
+//
+// Contact is centre-within-hull, i.e. the vehicle is modelled as a sphere of collision_radius.
+// That is the same shape the planner inflates by, so "collided" here means exactly "left the
+// volume the corridor certified" -- which is the property the safety argument claims.
+//
+// Events are edge-triggered. A single fly-through of one trunk lasts many state messages, and
+// counting samples would report one long graze as hundreds of collisions and make the number
+// meaningless for a success rate.
+void MockEnvironmentNode::check_collision()
+{
+  if (!collision_enabled_ || !state_received_) { return; }
+
+  const Eigen::Vector3d p(latest_state_.pose.position.x,
+                          latest_state_.pose.position.y,
+                          latest_state_.pose.position.z);
+
+  double penetration = 0.0;   // how far INSIDE the hull-inflated obstacle the centre sits
+  int hit_index = -1;
+
+  for (std::size_t i = 0; i < cylinders_.size(); ++i) {
+    const auto & c = cylinders_[i];
+    // Outside the vertical extent of the trunk: no contact regardless of lateral distance.
+    if (std::abs(p.z() - c.center.z()) > c.half_height + collision_radius_) { continue; }
+    const double lateral = std::hypot(p.x() - c.center.x(), p.y() - c.center.y());
+    const double overlap = (c.radius + collision_radius_) - lateral;
+    if (overlap > penetration) { penetration = overlap; hit_index = static_cast<int>(i); }
+  }
+
+  for (const auto & b : boxes_) {
+    // Distance from the centre to the box, per axis; zero inside.
+    Eigen::Vector3d d = Eigen::Vector3d::Zero();
+    for (int k = 0; k < 3; ++k) {
+      d[k] = std::max({b.min_corner[k] - p[k], 0.0, p[k] - b.max_corner[k]});
+    }
+    const double overlap = collision_radius_ - d.norm();
+    if (overlap > penetration) { penetration = overlap; hit_index = -2; }
+  }
+
+  const bool now_colliding = penetration > 0.0;
+
+  // Time in contact, integrated on the state stream's own clock.
+  const rclcpp::Time now = this->get_clock()->now();
+  if (have_last_check_ && in_collision_) {
+    const double dt = (now - last_collision_check_).seconds();
+    if (dt > 0.0 && dt < 1.0) { collision_seconds_ += dt; }
+  }
+  last_collision_check_ = now;
+  have_last_check_ = true;
+
+  if (now_colliding) {
+    deepest_penetration_ = std::max(deepest_penetration_, penetration);
+    if (!in_collision_) {
+      ++collision_events_;
+      RCLCPP_ERROR(this->get_logger(),
+                   "COLLISION %d: vehicle at (%.2f, %.2f, %.2f) is %.3f m inside %s "
+                   "(hull %.2f m). Total time in contact %.2f s, deepest %.3f m.",
+                   collision_events_, p.x(), p.y(), p.z(), penetration,
+                   hit_index >= 0 ? "a cylinder" : "a box",
+                   collision_radius_, collision_seconds_, deepest_penetration_);
+    }
+  } else if (in_collision_) {
+    RCLCPP_WARN(this->get_logger(),
+                "Clear of obstacle after collision %d. Time in contact so far %.2f s.",
+                collision_events_, collision_seconds_);
+  }
+  in_collision_ = now_colliding;
+
+  std_msgs::msg::Bool msg;
+  msg.data = now_colliding;
+  collision_pub_->publish(msg);
 }
 
 // -------------------------------------------------------------------
@@ -382,6 +548,25 @@ void MockEnvironmentNode::publish_lidar_scan()
   sensor_msgs::PointCloud2Iterator<float> iter_y(cloud_msg, "y");
   sensor_msgs::PointCloud2Iterator<float> iter_z(cloud_msg, "z");
 
+  if (sensor_frame_output_) {
+    // Re-express each hit relative to the sensor: NED -> body FRD -> sensor FLU (180 deg roll).
+    // Stamped with the pose the rays were cast from, so the preprocessor can look up the
+    // estimate for the same instant rather than whatever is newest when the scan arrives.
+    const Eigen::Matrix3d R_body_ned = q_body_to_ned.toRotationMatrix().transpose();
+    const Eigen::Vector3d flu_from_frd(1.0, -1.0, -1.0);
+    cloud_msg.header.stamp = latest_state_.header.stamp;
+    cloud_msg.header.frame_id = "livox_frame";
+    for (const auto & pt : hits) {
+      const Eigen::Vector3d p_sensor = flu_from_frd.cwiseProduct(R_body_ned * (pt - origin));
+      *iter_x = static_cast<float>(p_sensor.x());
+      *iter_y = static_cast<float>(p_sensor.y());
+      *iter_z = static_cast<float>(p_sensor.z());
+      ++iter_x; ++iter_y; ++iter_z;
+    }
+    sensor_lidar_pub_->publish(cloud_msg);
+    return;
+  }
+
   for (const auto & pt : hits) {
     *iter_x = static_cast<float>(pt.x());
     *iter_y = static_cast<float>(pt.y());
@@ -449,10 +634,16 @@ void MockEnvironmentNode::publish_obstacle_markers()
     m.scale.y = 2.0 * cyl.radius;
     m.scale.z = 2.0 * cyl.half_height;
 
-    m.color.r = 0.8f;
-    m.color.g = 0.3f;
-    m.color.b = 0.2f;
-    m.color.a = 0.7f;
+    // Neutral gray. Obstacles were reddish (0.8/0.3/0.2), which competed with the SFC wireframes
+    // -- those are deliberately red, and two reds in one figure make it hard to tell the
+    // corridor from the thing it is avoiding. Gray also reproduces legibly in print and in
+    // greyscale. Opaque: RViz only shades solids, so at alpha 1.0 a trunk reads as an object
+    // and an SFC wireframe cutting into one is obvious. The cost is that a trajectory passing
+    // BEHIND a trunk is hidden from that viewpoint -- drop alpha to 0.7 to see through them.
+    m.color.r = 0.5f;
+    m.color.g = 0.5f;
+    m.color.b = 0.5f;
+    m.color.a = 1.0f;
 
     marker_array.markers.push_back(m);
   }

@@ -19,6 +19,27 @@ def generate_launch_description():
     rviz2_splash_file = os.path.join(rosflight_sim_share_dir, "standalone_resource", "logo.png")
     param_file = os.path.join(rosflight_sim_share_dir, 'params', 'standalone_sim_params.yaml')
 
+    # Optional obstacle-world override. Empty means the built-in demo world; point it at one
+    # of params/forest_{easy,medium,hard}.yaml to run a benchmark. Layered AFTER param_file so
+    # its 'cylinders'/'boxes' win, while everything else (LiDAR spec, ground) is inherited.
+    environment_file = LaunchConfiguration('environment_file')
+    environment_file_arg = DeclareLaunchArgument(
+        'environment_file',
+        default_value=TextSubstitution(
+            text=os.path.join(rosflight_sim_share_dir, 'params', 'environment_demo.yaml')),
+        description="Path to an obstacle-world YAML (e.g. params/forest_medium.yaml). "
+                    "Defaults to environment_demo.yaml, which selects the built-in demo world."
+    )
+
+    # 'ned' keeps the historical truth-pose world cloud; 'sensor' publishes /livox/lidar in the
+    # LiDAR's frame and needs roscopter_sim's use_lidar_preprocessor:=true on the autopilot side.
+    lidar_output_frame = LaunchConfiguration('lidar_output_frame')
+    lidar_output_frame_arg = DeclareLaunchArgument(
+        'lidar_output_frame',
+        default_value='ned',
+        description="Mock LiDAR output: 'ned' (world, truth pose) or 'sensor' (raw, like the driver)."
+    )
+
     sim_aircraft_file = LaunchConfiguration('sim_aircraft_file')
     sim_aircraft_file_launch_arg = DeclareLaunchArgument(
         'sim_aircraft_file',
@@ -29,6 +50,8 @@ def generate_launch_description():
     return LaunchDescription(
         [
             rviz2_config_file_arg,
+            environment_file_arg,
+            lidar_output_frame_arg,
             sim_aircraft_file_launch_arg,
             Node(
                 package="tf2_ros",
@@ -91,7 +114,8 @@ def generate_launch_description():
                 executable="mock_environment_node",
                 name='mock_environment',
                 output="screen",
-                parameters=[param_file],
+                parameters=[param_file, environment_file,
+                            {"lidar_output_frame": lidar_output_frame}],
             ),
         ]
     )

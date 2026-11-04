@@ -1,0 +1,21 @@
+# Default obstacle world: nothing specified, so mock_environment_node falls back to its
+# built-in demo obstacles (the pillars/walls hardcoded in build_obstacle_world).
+#
+# This file exists so the launch argument `environment_file` always points at a REAL file.
+# ROS 2 launch treats every entry in `parameters=[...]` as a path to load, so an empty-string
+# default would fail at launch rather than doing nothing.
+#
+# It deliberately does NOT contain `cylinders: []` / `boxes: []`. ROS 2 cannot infer the type of
+# an empty YAML sequence, so declaring one aborts the node at startup:
+#   InvalidParameterValueException: parameter_value_from failed for 'boxes': No parameter value set
+# Omitting the keys leaves the node's declared empty defaults in force, which selects the demo
+# world -- exactly the intent. `ground_enabled` is restated at its default purely so the file has
+# a parameter in it and parses as a valid parameter file.
+#
+# To run a benchmark instead:
+#   ros2 launch rosflight_sim multirotor_standalone.launch.py \
+#     environment_file:=$(ros2 pkg prefix rosflight_sim)/share/rosflight_sim/params/forest_medium.yaml
+
+/mock_environment:
+  ros__parameters:
+    ground_enabled: true

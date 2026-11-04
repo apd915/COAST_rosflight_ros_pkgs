@@ -42,6 +42,7 @@
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <sensor_msgs/point_cloud2_iterator.hpp>
 #include <visualization_msgs/msg/marker_array.hpp>
+#include <std_msgs/msg/bool.hpp>
 #include "rosflight_msgs/msg/sim_state.hpp"
 
 namespace rosflight_sim
@@ -104,19 +105,40 @@ private:
   // --- RViz marker helpers ---
   void publish_obstacle_markers();
 
+  /// Check the TRUE vehicle position against the obstacle set and report contact.
+  ///
+  /// The sim has no physics, so a vehicle that flies into a trunk passes straight through and
+  /// nothing records it -- which makes "reached the goal" indistinguishable from "reached the
+  /// goal without collision", and the latter is what a success rate has to mean. This closes
+  /// that gap using the same exact primitives the raycaster already uses.
+  void check_collision();
+
   // --- ROS interfaces ---
   rclcpp::Publisher<visualization_msgs::msg::MarkerArray>::SharedPtr marker_pub_;
   rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr lidar_pub_;
+  rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr sensor_lidar_pub_;
+  rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr collision_pub_;
   rclcpp::Subscription<rosflight_msgs::msg::SimState>::SharedPtr state_sub_;
   rclcpp::TimerBase::SharedPtr lidar_timer_;
 
   // --- State ---
   rosflight_msgs::msg::SimState latest_state_;
   bool state_received_{false};
+  bool sensor_frame_output_{false};  ///< lidar_output_frame == "sensor"
 
   // --- Obstacle storage ---
   std::vector<AABB>     boxes_;
   std::vector<Cylinder> cylinders_;
+
+  // --- Collision accounting (truth vs obstacles; the sim has no physics) ---
+  bool   collision_enabled_{true};
+  double collision_radius_{0.49};   ///< vehicle hull; contact when centre is within this
+  bool   in_collision_{false};      ///< edge-triggers the event counter and the log
+  int    collision_events_{0};      ///< distinct entries into contact, not samples
+  double deepest_penetration_{0.0}; ///< m, worst overlap seen this run
+  double collision_seconds_{0.0};   ///< accumulated time in contact
+  rclcpp::Time last_collision_check_;
+  bool   have_last_check_{false};
 
   // --- Ground plane ---
   bool  ground_enabled_{true};

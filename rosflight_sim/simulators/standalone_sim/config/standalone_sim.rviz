@@ -120,6 +120,43 @@ Visualization Manager:
       Size (Pixels): 3
       Style: Points
       Value: true
+    - Class: rviz_default_plugins/PointCloud2
+      Enabled: true
+      Name: LiDAR (preprocessed, estimated pose)
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /lidar/points_ned
+      Color: 255; 0; 255
+      Color Transformer: FlatColor
+      Size (Pixels): 3
+      Style: Points
+      Value: true
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: SFC_Markers
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /sfc_markers
+      Value: true
+    - Class: rviz_default_plugins/Path
+      Enabled: true
+      Name: Trajectory_Path
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        History Policy: Keep Last
+        Reliability Policy: Reliable
+        Value: /trajectory_path
+      Color: 0; 0; 255
+      Line Style: Billboards
+      Line Width: 0.15
+      Value: true
   Enabled: true
   Global Options:
     Background Color: 255; 255; 255
